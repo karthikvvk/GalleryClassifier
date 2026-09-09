@@ -106,6 +106,7 @@ class _HomePageState extends State<HomePage> {
   bool _isRunning = false;
   bool _isSaving = false;
   bool _isLoadingDir = false;
+  bool _hasClassified = false;  // true after the first successful classification
 
   int? _selectedClassIdx;
 
@@ -214,6 +215,7 @@ class _HomePageState extends State<HomePage> {
               c.files = [];
             }
           }
+          _hasClassified = true;
           _tab = AppTab.classified;
           _selectedClassIdx = null;
         });
@@ -554,7 +556,9 @@ class _HomePageState extends State<HomePage> {
           subtitle: Text(
             c.fileCount > 0
                 ? '${c.fileCount} files  ${formatBytes(c.sizeBytes)}'
-                : 'Not yet classified',
+                : _hasClassified
+                    ? '0 files found'
+                    : 'Not yet classified',
           ),
           trailing: c.fileCount > 0
               ? Icon(
