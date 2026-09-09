@@ -139,9 +139,15 @@ def split_and_copy(
         "test":  image_paths[n_train + n_val :],
     }
 
+    dir_map = {
+        "train": Path(cfg.TRAIN_DIR),
+        "val":   Path(cfg.VAL_DIR),
+        "test":  Path(cfg.TEST_DIR),
+    }
+
     counts = {}
     for split_name, paths in splits.items():
-        dest_dir = Path(cfg.DATA_ROOT) / split_name / class_name
+        dest_dir = dir_map[split_name] / class_name
         if not dry_run:
             dest_dir.mkdir(parents=True, exist_ok=True)
         for src in paths:
@@ -173,15 +179,21 @@ def main():
         log.error(f"Raw data directory not found: {raw_root}")
         sys.exit(1)
 
-    # Verify expected class folders exist
-    missing = [c for c in cfg.CLASSES if not (raw_root / c).is_dir()]
+    # Verify expected class folders exist (using RAW_FOLDER_MAP for actual folder names)
+    missing = [
+        c for c in cfg.CLASSES
+        if not (raw_root / cfg.RAW_FOLDER_MAP.get(c, c)).is_dir()
+    ]
     if missing:
         log.warning(f"Missing class folders in raw/: {missing}. Will skip them.")
 
     total_stats = {}
     for class_name in cfg.CLASSES:
-        class_dir = raw_root / class_name
+        # Resolve the actual folder name on disk via the map (fallback to canonical)
+        raw_folder = cfg.RAW_FOLDER_MAP.get(class_name, class_name)
+        class_dir  = raw_root / raw_folder
         if not class_dir.is_dir():
+            log.warning(f"Folder not found, skipping: {class_dir}")
             continue
 
         log.info(f"\n{'─'*50}")
@@ -218,7 +230,7 @@ def main():
     if args.dry_run:
         log.info("DRY RUN — no files were modified.")
     else:
-        log.info(f"Data written to: {cfg.DATA_ROOT}")
+        log.info(f"Data written to split folders in: {cfg.TRAINING_DIR}/dataset")
 
 
 if __name__ == "__main__":
