@@ -156,6 +156,7 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
         )
 
     # Log unknown images (below confidence threshold)
+            files=[str(p) for p, _ in entries],
     unknown = raw_results.get("unknown", [])
     if unknown:
         log.warning("%d image(s) classified as 'unknown' (low confidence)", len(unknown))
@@ -168,7 +169,3 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.runtime.server:app", host="0.0.0.0", port=8000, reload=False)
