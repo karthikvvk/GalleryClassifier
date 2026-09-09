@@ -1,0 +1,24 @@
+{
+  "classes": [
+    "camera",
+    "memes",
+    "screenshots",
+    "wallpapers"
+  ],
+  "num_classes": 4,
+  "image_size": 224,
+  "backbone": "efficientnet_b0",
+  "imagenet_mean": [
+    0.485,
+    0.456,
+    0.406
+  ],
+  "imagenet_std": [
+    0.229,
+    0.224,
+    0.225
+  ],
+  "val_accuracy": 97.1563981042654,
+  "confidence_threshold": 0.6,
+  "checkpoint": "stage2_best.pt"
+}
