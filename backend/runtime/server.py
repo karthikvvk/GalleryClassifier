@@ -46,6 +46,11 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ── Add project root to sys.path if run directly ─────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # ── Classifier (loaded once at startup) ──────────────────────────────────────
 from backend.runtime.classifier import Classifier, SUPPORTED_EXTS  # noqa: E402
 
@@ -103,6 +108,7 @@ class ClassifyRequest(BaseModel):
 class ClassSummary(BaseModel):
     count: int
     size_bytes: int
+    files: list[str] = []
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -153,10 +159,10 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
         response[frontend_key] = ClassSummary(
             count=len(entries),
             size_bytes=sum(sz for _, sz in entries),
+            files=[str(p) for p, _ in entries],
         )
 
     # Log unknown images (below confidence threshold)
-            files=[str(p) for p, _ in entries],
     unknown = raw_results.get("unknown", [])
     if unknown:
         log.warning("%d image(s) classified as 'unknown' (low confidence)", len(unknown))
@@ -167,5 +173,12 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.runtime.server:app", host="0.0.0.0", port=8000, reload=False)
+
 
 
