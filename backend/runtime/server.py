@@ -93,7 +93,7 @@ _CLASS_MAP: dict[str, str] = {
 async def lifespan(app: FastAPI):
     """Pre-load the ONNX model so the first request isn't slow."""
     get_classifier()
-    log.info("Server ready — listening on http://localhost:8000")
+    log.info("Server ready — listening")
     yield
 
 

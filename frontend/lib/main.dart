@@ -106,7 +106,7 @@ class _HomePageState extends State<HomePage> {
   bool _isRunning = false;
   bool _isSaving = false;
   bool _isLoadingDir = false;
-  bool _hasClassified = false;  // true after the first successful classification
+  bool _hasClassified = false; // true after the first successful classification
 
   int? _selectedClassIdx;
 
@@ -201,8 +201,7 @@ class _HomePageState extends State<HomePage> {
             final entry = data[c.key] as Map<String, dynamic>?;
             if (entry != null) {
               c.fileCount = (entry['count'] as num?)?.toInt() ?? 0;
-              c.sizeBytes =
-                  (entry['size_bytes'] as num?)?.toInt() ?? 0;
+              c.sizeBytes = (entry['size_bytes'] as num?)?.toInt() ?? 0;
               final rawFiles = entry['files'];
               if (rawFiles is List) {
                 c.files = rawFiles.map((f) => f.toString()).toList();
@@ -736,9 +735,8 @@ class _HomePageState extends State<HomePage> {
                       path,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 10,
                           ),
                     ),
