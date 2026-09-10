@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pillow
+onnxruntime
+pydantic
+python-multipart
