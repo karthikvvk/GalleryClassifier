@@ -7,3 +7,7 @@ node_modules/
 virtual/
 **/logs/
 **/dataset/
+.bundle_tmp/
+*.zip
+**/dist/
+**/build/

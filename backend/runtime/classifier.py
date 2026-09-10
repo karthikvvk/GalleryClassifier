@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +29,13 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
-_RUNTIME_DIR = Path(__file__).parent
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    _RUNTIME_DIR = Path(sys._MEIPASS) / "backend" / "runtime"
+    if not _RUNTIME_DIR.exists():
+        _RUNTIME_DIR = Path(sys._MEIPASS)
+else:
+    _RUNTIME_DIR = Path(__file__).parent
+
 _ONNX_PATH   = _RUNTIME_DIR / "model.onnx"
 _META_PATH   = _RUNTIME_DIR / "model.json"
 
