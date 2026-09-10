@@ -1,0 +1,1245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GalleryClassifier — Web</title>
+    <meta
+      name="description"
+      content="Classify your photos into Screenshots, Memes, Wallpapers and Photos using AI — right in your browser."
+    />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- JSZip (client-side ZIP assembly — no server state required) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <style>
+      /* ─── Design tokens ───────────────────────────────────────────────────── */
+      :root {
+        --bg: #0a0c14;
+        --surface: rgba(255, 255, 255, 0.04);
+        --surface-high: rgba(255, 255, 255, 0.08);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-glow: rgba(99, 179, 237, 0.4);
+        --text: #e8eaf0;
+        --muted: #7b8394;
+        --accent: #3b82f6;
+        --accent-glow: rgba(59, 130, 246, 0.35);
+        --danger: #f87171;
+        --success: #34d399;
+
+        --cat-screenshot: #818cf8;
+        --cat-meme: #f472b6;
+        --cat-wallpaper: #34d399;
+        --cat-photo: #fb923c;
+
+        --radius: 14px;
+        --radius-sm: 8px;
+        --font: "Inter", system-ui, sans-serif;
+      }
+
+      /* ─── Reset & base ────────────────────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html {
+        font-size: 15px;
+      }
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* ─── Animated gradient orbs (background) ────────────────────────────── */
+      .bg-orbs {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        overflow: hidden;
+      }
+      .bg-orbs span {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+        opacity: 0.18;
+        animation: drift 18s ease-in-out infinite alternate;
+      }
+      .bg-orbs span:nth-child(1) {
+        width: 600px;
+        height: 600px;
+        background: radial-gradient(circle, #3b82f6, transparent);
+        top: -150px;
+        left: -100px;
+        animation-duration: 20s;
+      }
+      .bg-orbs span:nth-child(2) {
+        width: 500px;
+        height: 500px;
+        background: radial-gradient(circle, #818cf8, transparent);
+        top: 30%;
+        right: -120px;
+        animation-duration: 24s;
+        animation-delay: -6s;
+      }
+      .bg-orbs span:nth-child(3) {
+        width: 400px;
+        height: 400px;
+        background: radial-gradient(circle, #34d399, transparent);
+        bottom: -100px;
+        left: 35%;
+        animation-duration: 22s;
+        animation-delay: -12s;
+      }
+      @keyframes drift {
+        from {
+          transform: translate(0, 0) scale(1);
+        }
+        to {
+          transform: translate(40px, 30px) scale(1.08);
+        }
+      }
+
+      /* ─── Layout ──────────────────────────────────────────────────────────── */
+      .page {
+        position: relative;
+        z-index: 1;
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 24px 80px;
+      }
+
+      /* ─── Header ──────────────────────────────────────────────────────────── */
+      header {
+        text-align: center;
+        margin-bottom: 48px;
+      }
+      .logo-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .logo-icon {
+        width: 44px;
+        height: 44px;
+        background: linear-gradient(135deg, #3b82f6, #818cf8);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        box-shadow: 0 0 24px var(--accent-glow);
+      }
+      h1 {
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        background: linear-gradient(135deg, #e8eaf0, #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .subtitle {
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+
+      /* ─── Upload zone ─────────────────────────────────────────────────────── */
+      #drop-zone {
+        border: 2px dashed var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 52px 24px;
+        text-align: center;
+        cursor: pointer;
+        transition:
+          border-color 0.2s,
+          background 0.2s,
+          transform 0.15s,
+          box-shadow 0.2s;
+        position: relative;
+        outline: none;
+      }
+      #drop-zone:hover,
+      #drop-zone.drag-over {
+        border-color: var(--accent);
+        background: rgba(59, 130, 246, 0.07);
+        box-shadow:
+          0 0 0 4px var(--accent-glow),
+          inset 0 0 40px rgba(59, 130, 246, 0.04);
+        transform: translateY(-2px);
+      }
+      #drop-zone .dz-icon {
+        font-size: 3rem;
+        margin-bottom: 14px;
+        display: block;
+        transition: transform 0.3s;
+      }
+      #drop-zone:hover .dz-icon {
+        transform: scale(1.12) translateY(-4px);
+      }
+      #drop-zone .dz-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 6px;
+      }
+      #drop-zone .dz-sub {
+        font-size: 0.83rem;
+        color: var(--muted);
+      }
+      #drop-zone .dz-limit {
+        display: inline-block;
+        margin-top: 12px;
+        font-size: 0.78rem;
+        color: var(--accent);
+        background: rgba(59, 130, 246, 0.12);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: 20px;
+        padding: 3px 12px;
+      }
+      /* Hidden real input */
+      #file-input {
+        display: none;
+      }
+
+      /* ─── File chips (selected files preview) ────────────────────────────── */
+      #file-list-wrap {
+        margin-top: 16px;
+        display: none;
+      }
+      #file-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--surface-high);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 4px 10px 4px 8px;
+        font-size: 0.78rem;
+        color: var(--text);
+        max-width: 180px;
+        overflow: hidden;
+      }
+      .chip img {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        object-fit: cover;
+        flex-shrink: 0;
+      }
+      .chip span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .chip-remove {
+        flex-shrink: 0;
+        cursor: pointer;
+        color: var(--muted);
+        background: none;
+        border: none;
+        font-size: 1rem;
+        line-height: 1;
+        transition: color 0.15s;
+      }
+      .chip-remove:hover {
+        color: var(--danger);
+      }
+
+      /* ─── Error / info banner ─────────────────────────────────────────────── */
+      #msg-bar {
+        display: none;
+        margin-top: 12px;
+        padding: 10px 16px;
+        border-radius: var(--radius-sm);
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+      #msg-bar.error {
+        background: rgba(248, 113, 113, 0.12);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+        color: var(--danger);
+      }
+      #msg-bar.info {
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        color: #93c5fd;
+      }
+      #msg-bar.success {
+        background: rgba(52, 211, 153, 0.1);
+        border: 1px solid rgba(52, 211, 153, 0.25);
+        color: var(--success);
+      }
+
+      /* ─── Action buttons ──────────────────────────────────────────────────── */
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+        justify-content: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        font-weight: 600;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        padding: 11px 28px;
+        transition:
+          transform 0.15s,
+          box-shadow 0.2s,
+          opacity 0.2s;
+        outline: none;
+      }
+      .btn:active {
+        transform: scale(0.97);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #3b82f6, #6366f1);
+        color: #fff;
+        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+      }
+      .btn-primary:not(:disabled):hover {
+        box-shadow: 0 6px 28px rgba(59, 130, 246, 0.55);
+        transform: translateY(-1px);
+      }
+
+      .btn-secondary {
+        background: var(--surface-high);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      .btn-secondary:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+      }
+
+      /* ─── Progress bar ────────────────────────────────────────────────────── */
+      #progress-wrap {
+        display: none;
+        margin-top: 24px;
+      }
+      #progress-label {
+        font-size: 0.83rem;
+        color: var(--muted);
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+      }
+      #progress-track {
+        height: 5px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      #progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #3b82f6, #818cf8);
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+      @keyframes shimmer {
+        0% {
+          background-position: -400px 0;
+        }
+        100% {
+          background-position: 400px 0;
+        }
+      }
+      #progress-fill.indeterminate {
+        width: 45%;
+        background-size: 400px 100%;
+        background-image: linear-gradient(
+          90deg,
+          #3b82f6 0%,
+          #818cf8 50%,
+          #3b82f6 100%
+        );
+        animation: shimmer 1.4s linear infinite;
+      }
+
+      /* ─── Results section ─────────────────────────────────────────────────── */
+      #results-section {
+        display: none;
+        margin-top: 48px;
+      }
+      .results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .results-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        background: linear-gradient(90deg, #e8eaf0, #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .total-badge {
+        font-size: 0.78rem;
+        color: var(--muted);
+        background: var(--surface-high);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 3px 12px;
+      }
+
+      /* ─── Category cards ──────────────────────────────────────────────────── */
+      #category-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .cat-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px 18px 16px;
+        cursor: pointer;
+        transition:
+          transform 0.18s,
+          box-shadow 0.2s,
+          background 0.2s,
+          border-color 0.2s;
+        position: relative;
+        overflow: hidden;
+      }
+      .cat-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--cat-color);
+        border-radius: var(--radius) var(--radius) 0 0;
+        opacity: 0.85;
+      }
+      .cat-card:hover,
+      .cat-card.active {
+        transform: translateY(-3px);
+        background: var(--surface-high);
+        border-color: var(--cat-color-border);
+        box-shadow: 0 8px 32px var(--cat-glow);
+      }
+      .cat-card.empty {
+        cursor: default;
+        opacity: 0.55;
+      }
+      .cat-card.empty:hover {
+        transform: none;
+        box-shadow: none;
+        background: var(--surface);
+        border-color: var(--border);
+      }
+      .cat-icon {
+        font-size: 2rem;
+        margin-bottom: 10px;
+      }
+      .cat-name {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 4px;
+      }
+      .cat-count {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .cat-size {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      /* Category colours applied via JS */
+      .cat-screenshot {
+        --cat-color: #818cf8;
+        --cat-color-border: rgba(129, 140, 248, 0.4);
+        --cat-glow: rgba(129, 140, 248, 0.15);
+      }
+      .cat-memes {
+        --cat-color: #f472b6;
+        --cat-color-border: rgba(244, 114, 182, 0.4);
+        --cat-glow: rgba(244, 114, 182, 0.15);
+      }
+      .cat-wallpaper {
+        --cat-color: #34d399;
+        --cat-color-border: rgba(52, 211, 153, 0.4);
+        --cat-glow: rgba(52, 211, 153, 0.15);
+      }
+      .cat-photos {
+        --cat-color: #fb923c;
+        --cat-color-border: rgba(251, 146, 60, 0.4);
+        --cat-glow: rgba(251, 146, 60, 0.15);
+      }
+
+      /* ─── Thumbnail strip ─────────────────────────────────────────────────── */
+      #thumb-panel {
+        display: none;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        margin-bottom: 24px;
+      }
+      .thumb-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-high);
+      }
+      .thumb-panel-title {
+        font-size: 0.88rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .thumb-panel-close {
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 1.1rem;
+        transition: color 0.15s;
+      }
+      .thumb-panel-close:hover {
+        color: var(--text);
+      }
+      #thumb-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 8px;
+        padding: 12px;
+        max-height: 280px;
+        overflow-y: auto;
+      }
+      #thumb-grid::-webkit-scrollbar {
+        width: 5px;
+      }
+      #thumb-grid::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #thumb-grid::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 10px;
+      }
+      .thumb-item {
+        position: relative;
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        aspect-ratio: 1;
+        background: var(--surface-high);
+      }
+      .thumb-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .thumb-item .thumb-name {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+        font-size: 0.65rem;
+        color: #fff;
+        padding: 12px 4px 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .thumb-no-preview {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        font-size: 0.65rem;
+        color: var(--muted);
+      }
+      .thumb-no-preview .icon {
+        font-size: 1.5rem;
+      }
+
+      /* ─── Save actions ────────────────────────────────────────────────────── */
+      .save-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .save-hint {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      /* ─── Spinner ─────────────────────────────────────────────────────────── */
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        border-top-color: #fff;
+        animation: spin 0.7s linear infinite;
+        flex-shrink: 0;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ─── Divider ─────────────────────────────────────────────────────────── */
+      .divider {
+        height: 1px;
+        background: var(--border);
+        margin: 32px 0;
+      }
+
+      /* ─── Responsive ──────────────────────────────────────────────────────── */
+      @media (max-width: 540px) {
+        h1 {
+          font-size: 1.5rem;
+        }
+        #category-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        .actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .btn {
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg-orbs" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </div>
+
+    <main class="page">
+      <!-- ── Header ─────────────────────────────────────────────────────────── -->
+      <header>
+        <div class="logo-row">
+          <div class="logo-icon" aria-hidden="true">🖼️</div>
+          <h1>GalleryClassifier</h1>
+        </div>
+        <p class="subtitle">
+          Drop up to 20 images — AI sorts them into Screenshots, Memes,
+          Wallpapers &amp; Photos.
+        </p>
+      </header>
+
+      <!-- ── Drop zone ──────────────────────────────────────────────────────── -->
+      <div
+        id="drop-zone"
+        role="button"
+        tabindex="0"
+        aria-label="Upload images. Drag and drop or click to browse."
+        aria-describedby="dz-desc"
+      >
+        <span class="dz-icon" aria-hidden="true">📂</span>
+        <div class="dz-title">Drag &amp; drop your images here</div>
+        <p class="dz-sub" id="dz-desc">or click to browse files</p>
+        <span class="dz-limit">Max 20 files per upload</span>
+      </div>
+      <input
+        type="file"
+        id="file-input"
+        multiple
+        accept="image/*"
+        aria-hidden="true"
+      />
+
+      <!-- ── File chips ──────────────────────────────────────────────────────── -->
+      <div id="file-list-wrap" aria-live="polite">
+        <div id="file-chips"></div>
+      </div>
+
+      <!-- ── Message bar ────────────────────────────────────────────────────── -->
+      <div id="msg-bar" role="alert" aria-live="assertive"></div>
+
+      <!-- ── Classify / Clear buttons ───────────────────────────────────────── -->
+      <div class="actions">
+        <button
+          class="btn btn-primary"
+          id="classify-btn"
+          disabled
+          aria-label="Classify selected images"
+        >
+          <span aria-hidden="true">✨</span> Classify
+        </button>
+        <button
+          class="btn btn-secondary"
+          id="clear-btn"
+          disabled
+          aria-label="Clear selection"
+        >
+          Clear
+        </button>
+      </div>
+
+      <!-- ── Progress ───────────────────────────────────────────────────────── -->
+      <div id="progress-wrap" role="status" aria-live="polite">
+        <div id="progress-label">
+          <span id="progress-text">Uploading…</span>
+          <span id="progress-pct"></span>
+        </div>
+        <div id="progress-track" aria-hidden="true">
+          <div id="progress-fill" class="indeterminate"></div>
+        </div>
+      </div>
+
+      <!-- ── Results section ────────────────────────────────────────────────── -->
+      <section id="results-section" aria-label="Classification results">
+        <div class="divider"></div>
+        <div class="results-header">
+          <span class="results-title">Classification Results</span>
+          <span class="total-badge" id="total-badge"></span>
+        </div>
+
+        <!-- Category cards -->
+        <div id="category-grid" role="list"></div>
+
+        <!-- Thumbnail panel (shown on card click) -->
+        <div id="thumb-panel" aria-label="Image thumbnails">
+          <div class="thumb-panel-header">
+            <div class="thumb-panel-title">
+              <span id="thumb-panel-icon" aria-hidden="true"></span>
+              <span id="thumb-panel-name"></span>
+              <span
+                id="thumb-panel-count"
+                style="color: var(--muted); font-weight: 400"
+              ></span>
+            </div>
+            <button
+              class="thumb-panel-close"
+              id="thumb-close-btn"
+              aria-label="Close thumbnail panel"
+            >
+              ✕
+            </button>
+          </div>
+          <div id="thumb-grid" role="list"></div>
+        </div>
+
+        <!-- Save row -->
+        <div class="save-row">
+          <button
+            class="btn btn-primary"
+            id="save-btn"
+            aria-label="Download classified images as ZIP"
+          >
+            <span aria-hidden="true">💾</span> Save as ZIP
+          </button>
+          <span class="save-hint"
+            >Downloads <code>classified.zip</code> with 4 subfolders</span
+          >
+        </div>
+      </section>
+    </main>
+
+    <script>
+      /* ═══════════════════════════════════════════════════════════════════════════
+     CONFIG — change BACKEND_URL to your deployed Render URL
+     ═══════════════════════════════════════════════════════════════════════════ */
+      const BACKEND_URL = "http://localhost:8000"; // ← replace this
+      const MAX_FILES = 20;
+
+      /* ─── Category metadata ─────────────────────────────────────────────────── */
+      const CATEGORIES = [
+        {
+          key: "screenshot",
+          label: "Screenshots",
+          icon: "🖥️",
+          cls: "cat-screenshot",
+        },
+        { key: "memes", label: "Memes", icon: "😂", cls: "cat-memes" },
+        {
+          key: "wallpaper",
+          label: "Wallpapers",
+          icon: "🌄",
+          cls: "cat-wallpaper",
+        },
+        { key: "photos", label: "Photos", icon: "📷", cls: "cat-photos" },
+      ];
+
+      /* ─── State ─────────────────────────────────────────────────────────────── */
+      let selectedFiles = []; // File objects from picker / drop
+      let classifyResult = null; // raw JSON from server
+      let activeCatKey = null; // currently expanded category
+
+      /* ─── Element refs ──────────────────────────────────────────────────────── */
+      const dropZone = document.getElementById("drop-zone");
+      const fileInput = document.getElementById("file-input");
+      const fileListWrap = document.getElementById("file-list-wrap");
+      const fileChips = document.getElementById("file-chips");
+      const msgBar = document.getElementById("msg-bar");
+      const classifyBtn = document.getElementById("classify-btn");
+      const clearBtn = document.getElementById("clear-btn");
+      const progressWrap = document.getElementById("progress-wrap");
+      const progressFill = document.getElementById("progress-fill");
+      const progressText = document.getElementById("progress-text");
+      const progressPct = document.getElementById("progress-pct");
+      const resultsSection = document.getElementById("results-section");
+      const categoryGrid = document.getElementById("category-grid");
+      const totalBadge = document.getElementById("total-badge");
+      const thumbPanel = document.getElementById("thumb-panel");
+      const thumbGrid = document.getElementById("thumb-grid");
+      const thumbPanelIcon = document.getElementById("thumb-panel-icon");
+      const thumbPanelName = document.getElementById("thumb-panel-name");
+      const thumbPanelCount = document.getElementById("thumb-panel-count");
+      const thumbCloseBtn = document.getElementById("thumb-close-btn");
+      const saveBtn = document.getElementById("save-btn");
+
+      /* ═══════════════════════════════════════════════════════════════════════════
+     DROP ZONE
+     ═══════════════════════════════════════════════════════════════════════════ */
+      dropZone.addEventListener("click", () => fileInput.click());
+      dropZone.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") fileInput.click();
+      });
+
+      dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("drag-over");
+      });
+      dropZone.addEventListener("dragleave", (e) => {
+        if (!dropZone.contains(e.relatedTarget))
+          dropZone.classList.remove("drag-over");
+      });
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("drag-over");
+        handleFiles([...e.dataTransfer.files]);
+      });
+
+      fileInput.addEventListener("change", () => {
+        handleFiles([...fileInput.files]);
+        fileInput.value = ""; // reset so same file can be re-added after clear
+      });
+
+      function handleFiles(incoming) {
+        const images = incoming.filter((f) => f.type.startsWith("image/"));
+        const merged = dedupe([...selectedFiles, ...images]);
+
+        if (merged.length > MAX_FILES) {
+          showMsg(
+            `Max ${MAX_FILES} files allowed. Remove some first.`,
+            "error",
+          );
+          return;
+        }
+        if (images.length === 0) {
+          showMsg(
+            "No image files detected. Please select JPG, PNG, WEBP, etc.",
+            "error",
+          );
+          return;
+        }
+        hideMsg();
+        selectedFiles = merged;
+        renderChips();
+      }
+
+      function dedupe(files) {
+        const seen = new Set();
+        return files.filter((f) => {
+          const k = f.name + f.size;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+
+      /* ─── Chips ─────────────────────────────────────────────────────────────── */
+      function renderChips() {
+        fileChips.innerHTML = "";
+        selectedFiles.forEach((file, idx) => {
+          const chip = document.createElement("div");
+          chip.className = "chip";
+          chip.setAttribute("role", "listitem");
+
+          const img = document.createElement("img");
+          img.src = URL.createObjectURL(file);
+          img.alt = "";
+          img.onload = () => URL.revokeObjectURL(img.src); // free memory after render
+
+          const nameSpan = document.createElement("span");
+          nameSpan.textContent = file.name;
+          nameSpan.title = file.name;
+
+          const removeBtn = document.createElement("button");
+          removeBtn.className = "chip-remove";
+          removeBtn.innerHTML = "×";
+          removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
+          removeBtn.addEventListener("click", () => {
+            selectedFiles.splice(idx, 1);
+            renderChips();
+          });
+
+          chip.append(img, nameSpan, removeBtn);
+          fileChips.appendChild(chip);
+        });
+
+        fileListWrap.style.display =
+          selectedFiles.length > 0 ? "block" : "none";
+        classifyBtn.disabled = selectedFiles.length === 0;
+        clearBtn.disabled = selectedFiles.length === 0;
+      }
+
+      /* ─── Clear ──────────────────────────────────────────────────────────────── */
+      clearBtn.addEventListener("click", () => {
+        selectedFiles = [];
+        classifyResult = null;
+        activeCatKey = null;
+        renderChips();
+        hideMsg();
+        resultsSection.style.display = "none";
+        thumbPanel.style.display = "none";
+      });
+
+      /* ═══════════════════════════════════════════════════════════════════════════
+     CLASSIFY
+     ═══════════════════════════════════════════════════════════════════════════ */
+      classifyBtn.addEventListener("click", runClassify);
+
+      async function runClassify() {
+        if (selectedFiles.length === 0) return;
+
+        setLoading(true);
+        hideMsg();
+        resultsSection.style.display = "none";
+        thumbPanel.style.display = "none";
+        activeCatKey = null;
+
+        try {
+          const formData = new FormData();
+          selectedFiles.forEach((f) => formData.append("files", f));
+
+          setProgress("indeterminate", "Classifying images…");
+
+          const res = await fetch(`${BACKEND_URL}/classify-upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const err = await res
+              .json()
+              .catch(() => ({ detail: res.statusText }));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+          }
+
+          classifyResult = await res.json();
+          renderResults();
+          showMsg(
+            "Classification complete! Click a category to preview, then save as ZIP.",
+            "success",
+          );
+        } catch (err) {
+          showMsg(`Error: ${err.message}`, "error");
+        } finally {
+          setLoading(false);
+          hideProgress();
+        }
+      }
+
+      /* ═══════════════════════════════════════════════════════════════════════════
+     RESULTS
+     ═══════════════════════════════════════════════════════════════════════════ */
+      function renderResults() {
+        categoryGrid.innerHTML = "";
+
+        const total = CATEGORIES.reduce(
+          (s, c) => s + (classifyResult[c.key]?.count || 0),
+          0,
+        );
+        totalBadge.textContent = `${total} image${total !== 1 ? "s" : ""} classified`;
+
+        CATEGORIES.forEach((cat) => {
+          const data = classifyResult[cat.key] || {
+            count: 0,
+            size_bytes: 0,
+            files: [],
+          };
+          const empty = data.count === 0;
+
+          const card = document.createElement("div");
+          card.className = `cat-card ${cat.cls}${empty ? " empty" : ""}`;
+          card.setAttribute("role", "listitem");
+          if (!empty) {
+            card.setAttribute("tabindex", "0");
+            card.setAttribute(
+              "aria-label",
+              `${cat.label}: ${data.count} files. Click to preview.`,
+            );
+          }
+
+          card.innerHTML = `
+        <div class="cat-icon" aria-hidden="true">${cat.icon}</div>
+        <div class="cat-name">${cat.label}</div>
+        <div class="cat-count">${data.count} file${data.count !== 1 ? "s" : ""}</div>
+        <div class="cat-size">${data.count > 0 ? formatBytes(data.size_bytes) : "—"}</div>
+      `;
+
+          if (!empty) {
+            const activate = () => toggleCategory(cat, data, card);
+            card.addEventListener("click", activate);
+            card.addEventListener("keydown", (e) => {
+              if (e.key === "Enter" || e.key === " ") activate();
+            });
+          }
+
+          categoryGrid.appendChild(card);
+        });
+
+        resultsSection.style.display = "block";
+        resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      /* ─── Category expand / collapse ────────────────────────────────────────── */
+      function toggleCategory(cat, data, card) {
+        // Deactivate all cards
+        document
+          .querySelectorAll(".cat-card")
+          .forEach((c) => c.classList.remove("active"));
+
+        if (activeCatKey === cat.key) {
+          activeCatKey = null;
+          thumbPanel.style.display = "none";
+          return;
+        }
+
+        activeCatKey = cat.key;
+        card.classList.add("active");
+
+        // Build file → blob map from selected files
+        const fileMap = {};
+        selectedFiles.forEach((f) => (fileMap[f.name] = f));
+
+        thumbPanelIcon.textContent = cat.icon;
+        thumbPanelName.textContent = cat.label;
+        thumbPanelCount.textContent = ` — ${data.count} file${data.count !== 1 ? "s" : ""}`;
+
+        thumbGrid.innerHTML = "";
+        data.files.forEach((filename) => {
+          const item = document.createElement("div");
+          item.className = "thumb-item";
+          item.setAttribute("role", "listitem");
+
+          const blob = fileMap[filename];
+          if (blob) {
+            const img = document.createElement("img");
+            img.src = URL.createObjectURL(blob);
+            img.alt = filename;
+            img.loading = "lazy";
+            img.onload = () => URL.revokeObjectURL(img.src);
+
+            const label = document.createElement("div");
+            label.className = "thumb-name";
+            label.textContent = filename;
+
+            item.append(img, label);
+          } else {
+            item.innerHTML = `
+          <div class="thumb-no-preview">
+            <span class="icon" aria-hidden="true">${cat.icon}</span>
+            <span>${filename}</span>
+          </div>`;
+          }
+          thumbGrid.appendChild(item);
+        });
+
+        thumbPanel.style.display = "block";
+        thumbPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+
+      thumbCloseBtn.addEventListener("click", () => {
+        activeCatKey = null;
+        thumbPanel.style.display = "none";
+        document
+          .querySelectorAll(".cat-card")
+          .forEach((c) => c.classList.remove("active"));
+      });
+
+      /* ═══════════════════════════════════════════════════════════════════════════
+     SAVE AS ZIP  (client-side, no server state required)
+     ═══════════════════════════════════════════════════════════════════════════ */
+      saveBtn.addEventListener("click", async () => {
+        if (!classifyResult) return;
+
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<div class="spinner"></div> Building ZIP…';
+
+        try {
+          const zip = new JSZip();
+          const fileMap = {};
+          selectedFiles.forEach((f) => (fileMap[f.name] = f));
+
+          let added = 0;
+          for (const cat of CATEGORIES) {
+            const data = classifyResult[cat.key];
+            if (!data || data.files.length === 0) continue;
+
+            const folder = zip.folder(cat.label); // e.g. "Screenshots/"
+            for (const filename of data.files) {
+              const blob = fileMap[filename];
+              if (blob) {
+                folder.file(filename, blob);
+                added++;
+              }
+            }
+          }
+
+          if (added === 0) {
+            showMsg("No files matched — nothing to save.", "error");
+            return;
+          }
+
+          const zipBlob = await zip.generateAsync(
+            {
+              type: "blob",
+              compression: "DEFLATE",
+              compressionOptions: { level: 6 },
+            },
+            (meta) => {
+              setProgress(
+                "determinate",
+                "Building ZIP…",
+                Math.round(meta.percent),
+              );
+            },
+          );
+
+          // Trigger download
+          const url = URL.createObjectURL(zipBlob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "classified.zip";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+
+          showMsg(
+            `ZIP downloaded with ${added} file${added !== 1 ? "s" : ""} in ${CATEGORIES.length} folders.`,
+            "success",
+          );
+        } catch (err) {
+          showMsg(`ZIP failed: ${err.message}`, "error");
+        } finally {
+          hideProgress();
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '<span aria-hidden="true">💾</span> Save as ZIP';
+        }
+      });
+
+      /* ═══════════════════════════════════════════════════════════════════════════
+     UI HELPERS
+     ═══════════════════════════════════════════════════════════════════════════ */
+      function setLoading(on) {
+        classifyBtn.disabled = on;
+        clearBtn.disabled = on;
+        if (on) {
+          classifyBtn.innerHTML = '<div class="spinner"></div> Classifying…';
+          progressWrap.style.display = "block";
+        } else {
+          classifyBtn.innerHTML = '<span aria-hidden="true">✨</span> Classify';
+          classifyBtn.disabled = selectedFiles.length === 0;
+        }
+      }
+
+      function setProgress(mode, label, pct) {
+        progressWrap.style.display = "block";
+        progressText.textContent = label;
+        if (mode === "indeterminate") {
+          progressFill.classList.add("indeterminate");
+          progressPct.textContent = "";
+        } else {
+          progressFill.classList.remove("indeterminate");
+          progressFill.style.width = `${pct}%`;
+          progressPct.textContent = `${pct}%`;
+        }
+      }
+
+      function hideProgress() {
+        progressWrap.style.display = "none";
+        progressFill.classList.remove("indeterminate");
+        progressFill.style.width = "0%";
+      }
+
+      function showMsg(text, type = "info") {
+        msgBar.textContent = text;
+        msgBar.className = type;
+        msgBar.style.display = "block";
+      }
+      function hideMsg() {
+        msgBar.style.display = "none";
+      }
+
+      function formatBytes(bytes) {
+        if (bytes <= 0) return "0 B";
+        const units = ["B", "KiB", "MiB", "GiB"];
+        let v = bytes,
+          i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+          v /= 1024;
+          i++;
+        }
+        return `${v.toFixed(1)} ${units[i]}`;
+      }
+    </script>
+  </body>
+</html>

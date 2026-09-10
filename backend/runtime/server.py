@@ -9,16 +9,26 @@ Start with:
 or from the project root:
     python -m backend.runtime.server
 
-Endpoint
-────────
-POST /runclassification
+Endpoints
+─────────
+POST /runclassification          (desktop Flutter app)
   Request  : { "path": "<absolute directory path>" }
   Response : {
-    "screenshot": { "count": 120, "size_bytes": 543210 },
-    "memes":      { "count": 40,  "size_bytes": 123456 },
-    "wallpaper":  { "count": 12,  "size_bytes": 987654 },
-    "photos":     { "count": 300, "size_bytes": 5432100 }
+    "screenshot": { "count": 120, "size_bytes": 543210, "files": [...] },
+    "memes":      { "count": 40,  "size_bytes": 123456, "files": [...] },
+    "wallpaper":  { "count": 12,  "size_bytes": 987654, "files": [...] },
+    "photos":     { "count": 300, "size_bytes": 5432100,"files": [...] }
   }
+
+POST /classify-upload            (web UI — multipart/form-data)
+  Request  : form field "files" — 1 to 20 image files
+  Response : {
+    "screenshot": { "count": 2, "size_bytes": 12300, "files": ["a.jpg", ...] },
+    "memes":      { ... },
+    "wallpaper":  { ... },
+    "photos":     { ... }
+  }
+  Errors   : HTTP 422 if more than 20 files are submitted
 
 Note: The model uses class names ["camera", "memes", "screenshots", "wallpapers"].
 The Flutter frontend expects ["photos", "memes", "screenshot", "wallpaper"].
@@ -28,12 +38,15 @@ This server remaps them transparently.
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -168,6 +181,90 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
         log.warning("%d image(s) classified as 'unknown' (low confidence)", len(unknown))
 
     return response
+
+
+# ── Web upload endpoint ───────────────────────────────────────────────────────
+
+MAX_UPLOAD_FILES = 20
+
+
+@app.post("/classify-upload")
+async def classify_upload(
+    files: List[UploadFile] = File(...),
+) -> dict[str, ClassSummary]:
+    """
+    Accept up to MAX_UPLOAD_FILES image files via multipart/form-data.
+
+    Saves them to a temporary directory, classifies them with the same
+    Classifier used by /runclassification, then returns per-class summaries
+    where ``files`` contains the *original uploaded filenames* (not temp
+    paths) so the browser can match results back to its local File objects.
+    """
+    if len(files) == 0:
+        raise HTTPException(status_code=422, detail="No files uploaded.")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many files: {len(files)} sent, maximum is {MAX_UPLOAD_FILES}.",
+        )
+
+    tmpdir = tempfile.mkdtemp(prefix="galleryclassifier_")
+    try:
+        # ── Save uploads to temp dir ──────────────────────────────────────────
+        saved: list[tuple[Path, str]] = []   # (tmp_path, original_filename)
+        for upload in files:
+            original_name = Path(upload.filename).name  # strip any path component
+            tmp_path = Path(tmpdir) / original_name
+            # Handle duplicate filenames by appending an index
+            if tmp_path.exists():
+                stem = tmp_path.stem
+                suffix = tmp_path.suffix
+                tmp_path = Path(tmpdir) / f"{stem}_{len(saved)}{suffix}"
+            with tmp_path.open("wb") as f:
+                shutil.copyfileobj(upload.file, f)
+            saved.append((tmp_path, original_name))
+
+        log.info("classify-upload: saved %d files to %s", len(saved), tmpdir)
+
+        # ── Run inference ─────────────────────────────────────────────────────
+        t0 = time.perf_counter()
+        clf = get_classifier()
+        tmp_paths = [p for p, _ in saved]
+        raw_results = clf.classify(tmp_paths)
+        elapsed = time.perf_counter() - t0
+
+        # Build a lookup: tmp_path → original_filename
+        tmp_to_orig = {str(p): name for p, name in saved}
+
+        total = sum(len(v) for v in raw_results.values())
+        log.info(
+            "classify-upload: classified %d images in %.1fs (%.0f img/s)",
+            total, elapsed, total / max(elapsed, 1e-9),
+        )
+
+        # ── Aggregate ─────────────────────────────────────────────────────────
+        response: dict[str, ClassSummary] = {}
+        for model_cls, frontend_key in _CLASS_MAP.items():
+            entries = raw_results.get(model_cls, [])
+            response[frontend_key] = ClassSummary(
+                count=len(entries),
+                size_bytes=sum(sz for _, sz in entries),
+                # Return original filenames so the browser can find its blobs
+                files=[tmp_to_orig.get(str(p), p.name) for p, _ in entries],
+            )
+
+        unknown = raw_results.get("unknown", [])
+        if unknown:
+            log.warning(
+                "classify-upload: %d image(s) below confidence threshold",
+                len(unknown),
+            )
+
+        return response
+
+    finally:
+        # Always clean up temp files
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @app.get("/health")
