@@ -12,4 +12,5 @@ virtual/
 **/dist/
 **/build/
 .vscode/settings.json
-profiling/
+# profiling/
+*.log
