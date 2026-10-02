@@ -38,15 +38,17 @@ This server remaps them transparently.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -111,6 +113,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def profile_logging_middleware(request: Request, call_next):
+    log_file = os.environ.get("PROFILING_LOG_FILE")
+    
+    is_target_endpoint = "/runclassification" in request.url.path or "/classify-upload" in request.url.path
+    
+    if log_file and is_target_endpoint:
+        try:
+            with open(log_file, "a") as f:
+                f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, request\n")
+        except Exception:
+            pass
+
+    response = await call_next(request)
+
+    if log_file and is_target_endpoint:
+        try:
+            with open(log_file, "a") as f:
+                f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, response\n")
+        except Exception:
+            pass
+
+    return response
+
+
+# ── Batch size policy ────────────────────────────────────────────────────────
+# flutter → no limit (device can handle it, faster UX)
+# web     → small batches to keep RAM linear and predictable
+_FLUTTER_BATCH = None   # uses INFERENCE_BATCH default (64)
+_WEB_BATCH     = 8      # ~8 images at a time to cap peak RAM
+
+def _batch_for(request: Request) -> int | None:
+    """Return batch size based on X-Client header."""
+    client = request.headers.get("X-Client", "").lower()
+    if client == "flutter":
+        return _FLUTTER_BATCH
+    return _WEB_BATCH   # default: web-safe small batches
+
 
 # ── Request / response schemas ────────────────────────────────────────────────
 
@@ -127,10 +167,14 @@ class ClassSummary(BaseModel):
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @app.post("/runclassification")
-def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
+def run_classification(req: ClassifyRequest, request: Request) -> dict[str, ClassSummary]:
     """
     Scan *req.path* recursively, classify every image, and return
     per-class counts and total byte sizes.
+
+    X-Client header controls RAM vs speed tradeoff:
+      flutter → full batch size (fast, uses device capacity)
+      web     → small batches (RAM-linear, predictable)
     """
     root = Path(req.path).expanduser()
     if not root.exists():
@@ -148,21 +192,21 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
     log.info("Found %d images in %s", len(image_paths), root)
 
     if not image_paths:
-        # Return zero counts — not an error
         return {
             frontend_key: ClassSummary(count=0, size_bytes=0)
             for frontend_key in _CLASS_MAP.values()
         }
 
-    # ── Run inference ─────────────────────────────────────────────────────────
+    # ── Run inference (batch size based on client flag) ───────────────────────
     clf = get_classifier()
-    raw_results = clf.classify(image_paths)
+    raw_results = clf.classify(image_paths, batch_size=_batch_for(request))
     elapsed = time.perf_counter() - t0
 
     total = sum(len(v) for v in raw_results.values())
     log.info(
-        "Classified %d images in %.1fs  (%.0f img/s)",
+        "Classified %d images in %.1fs  (%.0f img/s)  [client=%s]",
         total, elapsed, total / max(elapsed, 1e-9),
+        request.headers.get("X-Client", "unknown"),
     )
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
@@ -175,7 +219,6 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
             files=[str(p) for p, _ in entries],
         )
 
-    # Log unknown images (below confidence threshold)
     unknown = raw_results.get("unknown", [])
     if unknown:
         log.warning("%d image(s) classified as 'unknown' (low confidence)", len(unknown))
@@ -188,12 +231,29 @@ def run_classification(req: ClassifyRequest) -> dict[str, ClassSummary]:
 MAX_UPLOAD_FILES = 20
 
 
+@app.post("/classify-count")
+async def classify_count(
+    files: List[UploadFile] = File(...),
+) -> dict[str, int]:
+    """
+    Lightweight pre-flight endpoint for the web UI.
+    Accepts the same multipart payload as /classify-upload but does NOT run
+    inference — it just counts the valid images and returns the count so the
+    frontend can estimate a time-remaining value before the real classify call.
+    """
+    count = sum(
+        1 for f in files
+        if Path(f.filename or "").suffix.lower() in SUPPORTED_EXTS
+    )
+    return {"count": count}
+
+
 @app.post("/classify-upload")
 async def classify_upload(
     files: List[UploadFile] = File(...),
 ) -> dict[str, ClassSummary]:
     """
-    Accept up to MAX_UPLOAD_FILES image files via multipart/form-data.
+    Accept image files via multipart/form-data.
 
     Saves them to a temporary directory, classifies them with the same
     Classifier used by /runclassification, then returns per-class summaries
@@ -202,11 +262,6 @@ async def classify_upload(
     """
     if len(files) == 0:
         raise HTTPException(status_code=422, detail="No files uploaded.")
-    if len(files) > MAX_UPLOAD_FILES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Too many files: {len(files)} sent, maximum is {MAX_UPLOAD_FILES}.",
-        )
 
     tmpdir = tempfile.mkdtemp(prefix="galleryclassifier_")
     try:
@@ -226,11 +281,12 @@ async def classify_upload(
 
         log.info("classify-upload: saved %d files to %s", len(saved), tmpdir)
 
-        # ── Run inference ─────────────────────────────────────────────────────
+        # ── Run inference (batch size based on client flag) ───────────────────
         t0 = time.perf_counter()
         clf = get_classifier()
         tmp_paths = [p for p, _ in saved]
-        raw_results = clf.classify(tmp_paths)
+        # Note: classify-upload is always called from the web UI
+        raw_results = clf.classify(tmp_paths, batch_size=_WEB_BATCH)
         elapsed = time.perf_counter() - t0
 
         # Build a lookup: tmp_path → original_filename

@@ -120,15 +120,25 @@ class Classifier:
     def classify(
         self,
         paths: list[Path],
+        batch_size: int | None = None,
     ) -> dict[str, list[tuple[Path, int]]]:
         """
         Classify a list of image paths.
+
+        Parameters
+        ──────────
+        paths       : list of image Paths to classify.
+        batch_size  : images per ONNX forward pass.  Defaults to INFERENCE_BATCH
+                      (64).  Pass a smaller value (e.g. 8) to limit peak RAM
+                      when the caller cannot afford large allocations.
 
         Returns
         ───────
         dict[class_name, list[(path, size_bytes)]]
           "unknown" key is used for images below the confidence threshold.
         """
+        effective_batch = batch_size if batch_size and batch_size > 0 else INFERENCE_BATCH
+
         results: dict[str, list[tuple[Path, int]]] = {c: [] for c in self.classes}
         results["unknown"] = []
 
@@ -155,7 +165,7 @@ class Classifier:
             tensors.append(arr)
             meta_buf.append((p, sz))
 
-            if len(tensors) >= INFERENCE_BATCH:
+            if len(tensors) >= effective_batch:
                 _flush(tensors, meta_buf)
                 tensors.clear()
                 meta_buf.clear()

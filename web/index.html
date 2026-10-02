@@ -676,8 +676,7 @@
           <h1>GalleryClassifier</h1>
         </div>
         <p class="subtitle">
-          Drop up to 20 images — AI sorts them into Screenshots, Memes,
-          Wallpapers &amp; Photos.
+          Images are processed in Chunks so please be patient.
         </p>
       </header>
 
@@ -692,7 +691,7 @@
         <span class="dz-icon" aria-hidden="true">📂</span>
         <div class="dz-title">Drag &amp; drop your images here</div>
         <p class="dz-sub" id="dz-desc">or click to browse files</p>
-        <span class="dz-limit">Max 20 files per upload</span>
+        <span class="dz-limit">As many image you want</span>
       </div>
       <input
         type="file"
@@ -739,6 +738,15 @@
         <div id="progress-track" aria-hidden="true">
           <div id="progress-fill" class="indeterminate"></div>
         </div>
+        <div
+          id="progress-eta"
+          style="
+            margin-top: 6px;
+            font-size: 0.8rem;
+            color: var(--muted);
+            text-align: right;
+          "
+        ></div>
       </div>
 
       <!-- ── Results section ────────────────────────────────────────────────── -->
@@ -794,7 +802,7 @@
       /* ═══════════════════════════════════════════════════════════════════════════
      CONFIG — change BACKEND_URL to your deployed Render URL
      ═══════════════════════════════════════════════════════════════════════════ */
-      const BACKEND_URL = "https://galleryclassifier.onrender.com"; // ← replace this
+      const BACKEND_URL = "http://localhost:8000"; // Changed to local Docker container
       const MAX_FILES = 20;
 
       /* ─── Category metadata ─────────────────────────────────────────────────── */
@@ -842,6 +850,7 @@
       const thumbPanelCount = document.getElementById("thumb-panel-count");
       const thumbCloseBtn = document.getElementById("thumb-close-btn");
       const saveBtn = document.getElementById("save-btn");
+      const progressEta = document.getElementById("progress-eta");
 
       /* ═══════════════════════════════════════════════════════════════════════════
      DROP ZONE
@@ -873,14 +882,6 @@
       function handleFiles(incoming) {
         const images = incoming.filter((f) => f.type.startsWith("image/"));
         const merged = dedupe([...selectedFiles, ...images]);
-
-        if (merged.length > MAX_FILES) {
-          showMsg(
-            `Max ${MAX_FILES} files allowed. Remove some first.`,
-            "error",
-          );
-          return;
-        }
         if (images.length === 0) {
           showMsg(
             "No image files detected. Please select JPG, PNG, WEBP, etc.",
@@ -953,6 +954,30 @@
       /* ═══════════════════════════════════════════════════════════════════════════
      CLASSIFY
      ═══════════════════════════════════════════════════════════════════════════ */
+      // Approx inference time per image (seconds) on web with batch_size=8.
+      // Calibrated from profiling data: ~0.15s per image is a conservative estimate.
+      const SECS_PER_IMAGE = 0.15;
+
+      let _etaInterval = null;
+
+      function startEtaTimer(imageCount) {
+        clearInterval(_etaInterval);
+        const totalSecs = Math.max(1, Math.ceil(imageCount * SECS_PER_IMAGE));
+        const endAt = Date.now() + totalSecs * 1000;
+        progressEta.textContent = `~${totalSecs}s remaining`;
+        _etaInterval = setInterval(() => {
+          const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+          progressEta.textContent =
+            left > 0 ? `~${left}s remaining` : "Almost done…";
+        }, 1000);
+      }
+
+      function stopEtaTimer() {
+        clearInterval(_etaInterval);
+        _etaInterval = null;
+        progressEta.textContent = "";
+      }
+
       classifyBtn.addEventListener("click", runClassify);
 
       async function runClassify() {
@@ -969,11 +994,15 @@
           selectedFiles.forEach((f) => formData.append("files", f));
 
           setProgress("indeterminate", "Classifying images…");
+          startEtaTimer(selectedFiles.length);
 
           const res = await fetch(`${BACKEND_URL}/classify-upload`, {
             method: "POST",
+            headers: { "X-Client": "web" },
             body: formData,
           });
+
+          stopEtaTimer();
 
           if (!res.ok) {
             const err = await res
@@ -989,6 +1018,7 @@
             "success",
           );
         } catch (err) {
+          stopEtaTimer();
           showMsg(`Error: ${err.message}`, "error");
         } finally {
           setLoading(false);
@@ -1218,6 +1248,7 @@
         progressWrap.style.display = "none";
         progressFill.classList.remove("indeterminate");
         progressFill.style.width = "0%";
+        progressEta.textContent = "";
       }
 
       function showMsg(text, type = "info") {

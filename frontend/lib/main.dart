@@ -191,7 +191,10 @@ class _HomePageState extends State<HomePage> {
       final uri = Uri.parse('$backendBaseUrl/runclassification');
       final response = await http.post(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client': 'flutter',
+        },
         body: jsonEncode({'path': _pathCtrl.text.trim()}),
       );
       if (response.statusCode == 200) {

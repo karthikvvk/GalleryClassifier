@@ -11,3 +11,5 @@ virtual/
 *.zip
 **/dist/
 **/build/
+.vscode/settings.json
+profiling/
