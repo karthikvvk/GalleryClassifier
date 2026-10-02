@@ -802,7 +802,7 @@
       /* ═══════════════════════════════════════════════════════════════════════════
      CONFIG — change BACKEND_URL to your deployed Render URL
      ═══════════════════════════════════════════════════════════════════════════ */
-      const BACKEND_URL = "http://localhost:8000"; // Changed to local Docker container
+      const BACKEND_URL = "https://galleryclassifier.onrender.com"; // Changed to local Docker container
       const MAX_FILES = 20;
 
       /* ─── Category metadata ─────────────────────────────────────────────────── */
@@ -1016,7 +1016,7 @@
           let merged = {};
           for (let b = 0; b < totalBatches; b++) {
             const batch = batches[b];
-            const pct = Math.round(((b) / totalBatches) * 100);
+            const pct = Math.round((b / totalBatches) * 100);
             setProgress(
               "determinate",
               `Classifying batch ${b + 1} of ${totalBatches}…`,
