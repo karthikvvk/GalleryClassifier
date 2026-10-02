@@ -950,10 +950,11 @@
         resultsSection.style.display = "none";
         thumbPanel.style.display = "none";
       });
-
       /* ═══════════════════════════════════════════════════════════════════════════
      CLASSIFY
      ═══════════════════════════════════════════════════════════════════════════ */
+      // Must match the backend's web batch_size so each request stays within limits.
+      const WEB_BATCH_SIZE = 8;
       // Approx inference time per image (seconds) on web with batch_size=8.
       // Calibrated from profiling data: ~0.15s per image is a conservative estimate.
       const SECS_PER_IMAGE = 0.15;
@@ -978,6 +979,19 @@
         progressEta.textContent = "";
       }
 
+      // Merge two classify result maps together (accumulates counts/sizes/files).
+      function mergeResults(base, incoming) {
+        for (const [cls, data] of Object.entries(incoming)) {
+          if (!base[cls]) {
+            base[cls] = { count: 0, size_bytes: 0, files: [] };
+          }
+          base[cls].count += data.count || 0;
+          base[cls].size_bytes += data.size_bytes || 0;
+          base[cls].files = base[cls].files.concat(data.files || []);
+        }
+        return base;
+      }
+
       classifyBtn.addEventListener("click", runClassify);
 
       async function runClassify() {
@@ -989,29 +1003,50 @@
         thumbPanel.style.display = "none";
         activeCatKey = null;
 
+        // Split files into batches of WEB_BATCH_SIZE
+        const batches = [];
+        for (let i = 0; i < selectedFiles.length; i += WEB_BATCH_SIZE) {
+          batches.push(selectedFiles.slice(i, i + WEB_BATCH_SIZE));
+        }
+        const totalBatches = batches.length;
+
+        startEtaTimer(selectedFiles.length);
+
         try {
-          const formData = new FormData();
-          selectedFiles.forEach((f) => formData.append("files", f));
+          let merged = {};
+          for (let b = 0; b < totalBatches; b++) {
+            const batch = batches[b];
+            const pct = Math.round(((b) / totalBatches) * 100);
+            setProgress(
+              "determinate",
+              `Classifying batch ${b + 1} of ${totalBatches}…`,
+              pct,
+            );
 
-          setProgress("indeterminate", "Classifying images…");
-          startEtaTimer(selectedFiles.length);
+            const formData = new FormData();
+            batch.forEach((f) => formData.append("files", f));
 
-          const res = await fetch(`${BACKEND_URL}/classify-upload`, {
-            method: "POST",
-            headers: { "X-Client": "web" },
-            body: formData,
-          });
+            const res = await fetch(`${BACKEND_URL}/classify-upload`, {
+              method: "POST",
+              headers: { "X-Client": "web" },
+              body: formData,
+            });
 
-          stopEtaTimer();
+            if (!res.ok) {
+              const err = await res
+                .json()
+                .catch(() => ({ detail: res.statusText }));
+              throw new Error(
+                `Batch ${b + 1} failed: ${err.detail || `HTTP ${res.status}`}`,
+              );
+            }
 
-          if (!res.ok) {
-            const err = await res
-              .json()
-              .catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || `HTTP ${res.status}`);
+            const batchResult = await res.json();
+            merged = mergeResults(merged, batchResult);
           }
 
-          classifyResult = await res.json();
+          stopEtaTimer();
+          classifyResult = merged;
           renderResults();
           showMsg(
             "Classification complete! Click a category to preview, then save as ZIP.",
